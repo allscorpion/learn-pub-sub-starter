@@ -3,8 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"os"
-	"os/signal"
 
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/gamelogic"
 	"github.com/bootdotdev/learn-pub-sub-starter/internal/pubsub"
@@ -30,17 +28,78 @@ func main() {
 		log.Fatal(err)
 	}
 
-	queueName := fmt.Sprintf("%v.%v", routing.PauseKey, username)
-	_, _, err = pubsub.DeclareAndBind(conn, routing.ExchangePerilDirect, queueName, routing.PauseKey, pubsub.TRANSIENT)
+	channel, err := conn.Channel()
 
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	// wait for ctrl+c
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	<-signalChan
+	gameState := gamelogic.NewGameState(username)
 
-	log.Println("shutdown connection to rabbitmq")
+	err = pubsub.SubscribeJSON(
+		conn,
+		routing.ExchangePerilDirect,
+		fmt.Sprintf("%v.%v", routing.PauseKey, username),
+		routing.PauseKey,
+		pubsub.TRANSIENT,
+		handlerPause(gameState),
+	)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	err = pubsub.SubscribeJSON(
+		conn,
+		routing.ExchangePerilTopic,
+		fmt.Sprintf("%v.%v", routing.ArmyMovesPrefix, username),
+		routing.ArmyMovesPrefix+".*",
+		pubsub.TRANSIENT,
+		handlerMove(gameState),
+	)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for {
+		input := gamelogic.GetInput()
+
+		if len(input) == 0 {
+			continue
+		}
+
+		command := input[0]
+
+		switch command {
+		case "spawn":
+			err := gameState.CommandSpawn(input)
+			if err != nil {
+				fmt.Println(err)
+			}
+		case "move":
+			move, err := gameState.CommandMove(input)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			err = pubsub.PublishJSON(channel, routing.ExchangePerilTopic, fmt.Sprintf("%v.%v", routing.ArmyMovesPrefix, username), move)
+			if err != nil {
+				fmt.Println(err)
+				continue
+			}
+			fmt.Println("move has been published")
+		case "status":
+			gameState.CommandStatus()
+		case "help":
+			gamelogic.PrintClientHelp()
+		case "spam":
+			fmt.Println("spamming not currently supported")
+		case "exit":
+			gamelogic.PrintQuit()
+			return
+		default:
+			fmt.Println("unrecognized command")
+		}
+	}
 }

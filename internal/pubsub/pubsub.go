@@ -3,6 +3,7 @@ package pubsub
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -42,7 +43,12 @@ func DeclareAndBind(
 		return &amqp.Channel{}, amqp.Queue{}, err
 	}
 
-	queue, err := channel.QueueDeclare(queueName, queueType == DURABLE, queueType == TRANSIENT, queueType == TRANSIENT, false, nil)
+	durable := queueType == DURABLE
+	autoDelete := queueType == TRANSIENT
+	exclusive := queueType == TRANSIENT
+	queue, err := channel.QueueDeclare(queueName, durable, autoDelete, exclusive, false, amqp.Table{
+		"x-dead-letter-exchange": "peril_dlx",
+	})
 
 	if err != nil {
 		return &amqp.Channel{}, amqp.Queue{}, err
@@ -55,4 +61,58 @@ func DeclareAndBind(
 	}
 
 	return channel, queue, nil
+}
+
+type AkyType int32
+
+const (
+	Ack         AkyType = 1
+	NackRequeue AkyType = 2
+	NackDiscard AkyType = 3
+)
+
+func SubscribeJSON[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	queueType SimpleQueueType,
+	handler func(T) AkyType,
+) error {
+	channel, queue, err := DeclareAndBind(conn, exchange, queueName, key, queueType)
+
+	if err != nil {
+		return err
+	}
+
+	deliveryChannels, err := channel.Consume(queue.Name, "", false, false, false, false, nil)
+
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		for deliveryChannel := range deliveryChannels {
+			var data T
+			if err := json.Unmarshal(deliveryChannel.Body, &data); err != nil {
+				fmt.Println(err)
+				return
+			}
+			akyType := handler(data)
+			switch akyType {
+			case Ack:
+				fmt.Println("message acknowledged")
+				deliveryChannel.Ack(false)
+			case NackRequeue:
+				fmt.Println("message not acknowledged and added to requeue")
+				deliveryChannel.Nack(false, true)
+			case NackDiscard:
+				fmt.Println("message not acknowledged and discarded")
+				deliveryChannel.Nack(false, false)
+			}
+
+		}
+	}()
+
+	return nil
 }
