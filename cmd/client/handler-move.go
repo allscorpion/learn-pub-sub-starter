@@ -9,8 +9,8 @@ import (
 	"github.com/rabbitmq/amqp091-go"
 )
 
-func handlerMove(gs *gamelogic.GameState, ch *amqp091.Channel) func(gamelogic.ArmyMove) pubsub.AkyType {
-	return func(move gamelogic.ArmyMove) pubsub.AkyType {
+func handlerMove(gs *gamelogic.GameState, ch *amqp091.Channel) func(gamelogic.ArmyMove) pubsub.AckType {
+	return func(move gamelogic.ArmyMove) pubsub.AckType {
 		defer fmt.Print("> ")
 		moveOutcome := gs.HandleMove(move)
 
