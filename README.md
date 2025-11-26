@@ -1,3 +1,3 @@
-# learn-pub-sub-starter (Peril)
+# Peril
 
-This is the starter code used in Boot.dev's [Learn Pub/Sub](https://learn.boot.dev/learn-pub-sub) course.
+A test product to learn rabbit MQ pub sub architecture
